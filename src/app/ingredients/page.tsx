@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Ingredient } from '@/models/types';
 import { getIngredients, addIngredient, updateIngredient, deleteIngredient } from '@/models/store';
 import AuthLayout from '@/components/Layout';
@@ -13,23 +13,27 @@ export default function IngredientsPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    // Load ingredients on component mount
-    const fetchIngredients = async () => {
-      setLoading(true);
-      try {
-        const data = await getIngredients();
-        setIngredients(data);
-      } catch (err) {
-        setError('Failed to load ingredients');
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchIngredients();
+  // Create a reusable fetch function with useCallback
+  const fetchIngredients = useCallback(async () => {
+    setLoading(true);
+    try {
+      console.log('Fetching ingredients');
+      const data = await getIngredients();
+      console.log('Fetched ingredients data:', data);
+      setIngredients(data);
+      setError('');
+    } catch (err) {
+      setError('Failed to load ingredients');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  // Load ingredients on component mount
+  useEffect(() => {
+    fetchIngredients();
+  }, [fetchIngredients]);
 
   const handleAddIngredient = async () => {
     if (!newIngredientName.trim()) {
@@ -40,20 +44,18 @@ export default function IngredientsPage() {
     setLoading(true);
     try {
       await addIngredient(newIngredientName.trim());
-      const updatedIngredients = await getIngredients();
-      setIngredients(updatedIngredients);
       setNewIngredientName('');
-      setError('');
+      // Directly fetch updated ingredients
+      await fetchIngredients();
     } catch (err) {
       setError('Failed to add ingredient');
       console.error(err);
-    } finally {
-      setLoading(false);
+      setLoading(false); // Make sure loading is set to false if fetchIngredients isn't called
     }
   };
 
   const handleStartEdit = (ingredient: Ingredient) => {
-    setEditingId(ingredient.id);
+    setEditingId(ingredient.ingredientId);
     setEditName(ingredient.name);
     setError('');
   };
@@ -73,14 +75,12 @@ export default function IngredientsPage() {
     setLoading(true);
     try {
       await updateIngredient(id, editName.trim());
-      const updatedIngredients = await getIngredients();
-      setIngredients(updatedIngredients);
       setEditingId(null);
-      setError('');
+      // Directly fetch updated ingredients
+      await fetchIngredients();
     } catch (err) {
       setError('Failed to update ingredient');
       console.error(err);
-    } finally {
       setLoading(false);
     }
   };
@@ -92,16 +92,15 @@ export default function IngredientsPage() {
       
       if (!result.success) {
         setError(`Cannot delete ingredient that is used in meal: ${result.mealWithIngredient?.title}`);
+        setLoading(false);
         return;
       }
       
-      const updatedIngredients = await getIngredients();
-      setIngredients(updatedIngredients);
-      setError('');
+      // Directly fetch updated ingredients
+      await fetchIngredients();
     } catch (err) {
       setError('Failed to delete ingredient');
       console.error(err);
-    } finally {
       setLoading(false);
     }
   };
@@ -145,14 +144,14 @@ export default function IngredientsPage() {
             <ul style={{ listStyle: 'none' }}>
               {ingredients.map((ingredient) => (
                 <li 
-                  key={ingredient.id} 
+                  key={ingredient.ingredientId} 
                   className="flex justify-between items-center"
                   style={{ 
                     padding: '0.75rem 0', 
                     borderBottom: '1px solid var(--border-color)',
                   }}
                 >
-                  {editingId === ingredient.id ? (
+                  {editingId === ingredient.ingredientId ? (
                     <div className="flex gap-2" style={{ width: '100%' }}>
                       <input
                         type="text"
@@ -162,7 +161,7 @@ export default function IngredientsPage() {
                         disabled={loading}
                       />
                       <button 
-                        onClick={() => handleSaveEdit(ingredient.id)}
+                        onClick={() => handleSaveEdit(ingredient.ingredientId)}
                         disabled={loading}
                       >
                         {loading ? 'Saving...' : 'Save'}
@@ -188,7 +187,7 @@ export default function IngredientsPage() {
                         </button>
                         <button 
                           style={{ backgroundColor: 'var(--error-color)' }}
-                          onClick={() => handleDeleteIngredient(ingredient.id)}
+                          onClick={() => handleDeleteIngredient(ingredient.ingredientId)}
                           disabled={loading}
                         >
                           {loading ? 'Deleting...' : 'Delete'}

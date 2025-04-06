@@ -1,4 +1,16 @@
 // API client for the lunch planner application
+import { 
+  Ingredient, 
+  Meal, 
+  PlanDay, 
+  GroceryItem, 
+  User, 
+  CreateIngredientRequest, 
+  CreateMealRequest, 
+  UpdatePlanDayRequest, 
+  MealIngredient 
+} from '@/models/types';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
 
 // Storage key for JWT token
@@ -43,34 +55,169 @@ const apiFetch = async <T = unknown>(endpoint: string, options: RequestInit = {}
     ...(options.headers || {})
   };
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers
-  });
+  try {
+    console.log(`API request to ${endpoint}`);
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers
+    });
+    console.log(`API response status: ${response.status}`);
 
-  // Handle unauthorized responses
-  if (response.status === 401) {
-    clearToken();
-    // Force reload to login page if needed
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
+    // Handle unauthorized responses
+    if (response.status === 401) {
+      clearToken();
+      // Force reload to login page if needed
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+      throw new Error('Unauthorized');
     }
-    throw new Error('Unauthorized');
-  }
 
-  const data = await response.json() as ApiResponse;
-  
-  if (!response.ok) {
-    throw new Error(data.message || 'API request failed');
+    // Handle no-content responses
+    if (response.status === 204) {
+      // For endpoints that should return arrays, return empty array
+      if (
+        endpoint === '/ingredients' || 
+        endpoint === '/meals' || 
+        endpoint === '/plans' ||
+        endpoint === '/plans/shopping-list'
+      ) {
+        return [] as unknown as T;
+      }
+      return {} as T;
+    }
+
+    // Check if there's actual content to parse
+    const contentType = response.headers.get('content-type');
+    console.log(`Content-Type: ${contentType}`);
+    
+    // Parse JSON response
+    if (contentType && contentType.includes('application/json')) {
+      try {
+        const data = await response.json();
+        console.log(`API response data:`, data);
+        
+        if (!response.ok) {
+          throw new Error((data as ApiResponse).message || `API request failed with status ${response.status}`);
+        }
+        
+        // Special handling for array endpoints
+        if (
+          (endpoint === '/ingredients' || 
+           endpoint === '/meals')
+        ) {
+          // If we expect an array but got something else
+          if (!Array.isArray(data)) {
+            console.warn(`Expected array response from ${endpoint} but got:`, typeof data);
+            
+            // Check if the data is wrapped in a property like 'items' or 'data'
+            const possibleArrayProperties = ['ingredients', 'meals'];
+            for (const prop of possibleArrayProperties) {
+              if (data && typeof data === 'object' && Array.isArray(data[prop])) {
+                console.log(`Found array in property '${prop}'`);
+                return data[prop] as unknown as T;
+              }
+            }
+            
+            return [] as unknown as T;
+          }
+          
+          // If we got a valid array, return it
+          return data as unknown as T;
+        }
+        
+        // Special handling for plans endpoint
+        if (endpoint === '/plans') {
+          console.log('Processing /plans response:', data);
+          if (Array.isArray(data)) {
+            return data as unknown as T;
+          }
+          if (data && typeof data === 'object' && Array.isArray(data.planDays)) {
+            console.log('Found planDays array in response');
+            return data.planDays as unknown as T;
+          }
+          return [] as unknown as T;
+        }
+        
+        // Special handling for plan day endpoint
+        if (endpoint.startsWith('/plans/') && endpoint !== '/plans/shopping-list') {
+          console.log('Processing plan day response:', data);
+          if (data && typeof data === 'object' && data.planDay) {
+            console.log('Found planDay object in response');
+            return data.planDay as unknown as T;
+          }
+        }
+        
+        // Special handling for shopping list endpoint
+        if (endpoint === '/plans/shopping-list') {
+          console.log('Processing shopping list response:', data);
+          if (Array.isArray(data)) {
+            return data as unknown as T;
+          }
+          if (data && typeof data === 'object' && Array.isArray(data.shoppingList)) {
+            return data.shoppingList as unknown as T;
+          }
+          return [] as unknown as T;
+        }
+        
+        // For non-array endpoints, return the data as is
+        return data as unknown as T;
+      } catch (e) {
+        // JSON parsing failed
+        console.error(`JSON parsing failed for ${endpoint}:`, e);
+        if (
+          endpoint === '/ingredients' || 
+          endpoint === '/meals' || 
+          endpoint === '/plans' ||
+          endpoint === '/plans/shopping-list'
+        ) {
+          return [] as unknown as T;
+        }
+        if (response.ok) {
+          return {} as T;
+        } else {
+          throw new Error('Invalid JSON response');
+        }
+      }
+    } else if (response.ok) {
+      // Non-JSON successful response
+      console.warn(`Non-JSON response for ${endpoint}`);
+      // For endpoints that should return arrays, return empty array
+      if (
+        endpoint === '/ingredients' || 
+        endpoint === '/meals' || 
+        endpoint === '/plans' ||
+        endpoint === '/plans/shopping-list'
+      ) {
+        return [] as unknown as T;
+      }
+      return {} as T;
+    } else {
+      throw new Error(`Unexpected response type: ${contentType}`);
+    }
+  } catch (error) {
+    // Handle network errors and other exceptions
+    console.error(`API request to ${endpoint} failed:`, error);
+    
+    // For collection endpoints, return empty arrays on error
+    if (
+      endpoint === '/ingredients' || 
+      endpoint === '/meals' || 
+      endpoint === '/plans' ||
+      endpoint === '/plans/shopping-list'
+    ) {
+      console.warn(`Returning empty array for failed ${endpoint} request`);
+      return [] as unknown as T;
+    }
+    
+    throw error;
   }
-  
-  return data as unknown as T;
 };
 
 // Authentication APIs
 export const authAPI = {
-  register: async (name: string, email: string, password: string) => {
-    const data = await apiFetch<ApiResponse>('/auth/register', {
+  register: async (name: string, email: string, password: string): Promise<User & { token: string }> => {
+    const data = await apiFetch<ApiResponse & User>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password })
     });
@@ -79,10 +226,10 @@ export const authAPI = {
       setToken(data.token);
     }
     
-    return data;
+    return data as User & { token: string };
   },
   
-  login: async (email: string, password: string) => {
+  login: async (email: string, password: string): Promise<{ token: string }> => {
     const data = await apiFetch<ApiResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password })
@@ -92,19 +239,19 @@ export const authAPI = {
       setToken(data.token);
     }
     
-    return data;
+    return data as { token: string };
   },
   
   logout: () => {
     clearToken();
   },
   
-  getCurrentUser: async () => {
-    return await apiFetch('/auth/me');
+  getCurrentUser: async (): Promise<User> => {
+    return await apiFetch<User>('/auth/me');
   },
   
-  changePassword: async (currentPassword: string, newPassword: string) => {
-    return await apiFetch('/auth/change-password', {
+  changePassword: async (currentPassword: string, newPassword: string): Promise<{ success: boolean }> => {
+    return await apiFetch<{ success: boolean }>('/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword })
     });
@@ -113,30 +260,32 @@ export const authAPI = {
 
 // Ingredients APIs
 export const ingredientAPI = {
-  getAll: async () => {
-    return await apiFetch('/ingredients');
+  getAll: async (): Promise<Ingredient[]> => {
+    return await apiFetch<Ingredient[]>('/ingredients');
   },
   
-  getById: async (id: string) => {
-    return await apiFetch(`/ingredients/${id}`);
+  getById: async (id: string): Promise<Ingredient> => {
+    return await apiFetch<Ingredient>(`/ingredients/${id}`);
   },
   
-  create: async (name: string) => {
-    return await apiFetch('/ingredients', {
+  create: async (name: string): Promise<Ingredient> => {
+    const request: CreateIngredientRequest = { name };
+    return await apiFetch<Ingredient>('/ingredients', {
       method: 'POST',
-      body: JSON.stringify({ name })
+      body: JSON.stringify(request)
     });
   },
   
-  update: async (id: string, name: string) => {
-    return await apiFetch(`/ingredients/${id}`, {
+  update: async (id: string, name: string): Promise<Ingredient> => {
+    const request: CreateIngredientRequest = { name };
+    return await apiFetch<Ingredient>(`/ingredients/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name })
+      body: JSON.stringify(request)
     });
   },
   
-  delete: async (id: string) => {
-    return await apiFetch(`/ingredients/${id}`, {
+  delete: async (id: string): Promise<{ success: boolean }> => {
+    return await apiFetch<{ success: boolean }>(`/ingredients/${id}`, {
       method: 'DELETE'
     });
   }
@@ -144,30 +293,32 @@ export const ingredientAPI = {
 
 // Meals APIs
 export const mealAPI = {
-  getAll: async () => {
-    return await apiFetch('/meals');
+  getAll: async (): Promise<Meal[]> => {
+    return await apiFetch<Meal[]>('/meals');
   },
   
-  getById: async (id: string) => {
-    return await apiFetch(`/meals/${id}`);
+  getById: async (id: string): Promise<Meal> => {
+    return await apiFetch<Meal>(`/meals/${id}`);
   },
   
-  create: async (title: string, ingredients: { ingredientId: string, quantity: string }[]) => {
-    return await apiFetch('/meals', {
+  create: async (title: string, ingredients: MealIngredient[]): Promise<Meal> => {
+    const request: CreateMealRequest = { title, ingredients };
+    return await apiFetch<Meal>('/meals', {
       method: 'POST',
-      body: JSON.stringify({ title, ingredients })
+      body: JSON.stringify(request)
     });
   },
   
-  update: async (id: string, title: string, ingredients: { ingredientId: string, quantity: string }[]) => {
-    return await apiFetch(`/meals/${id}`, {
+  update: async (id: string, title: string, ingredients: MealIngredient[]): Promise<Meal> => {
+    const request: CreateMealRequest = { title, ingredients };
+    return await apiFetch<Meal>(`/meals/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ title, ingredients })
+      body: JSON.stringify(request)
     });
   },
   
-  delete: async (id: string) => {
-    return await apiFetch(`/meals/${id}`, {
+  delete: async (id: string): Promise<{ success: boolean }> => {
+    return await apiFetch<{ success: boolean }>(`/meals/${id}`, {
       method: 'DELETE'
     });
   }
@@ -175,24 +326,24 @@ export const mealAPI = {
 
 // Meal Plan APIs
 export const planAPI = {
-  getAll: async () => {
-    return await apiFetch('/plans');
+  getAll: async (): Promise<PlanDay[]> => {
+    return await apiFetch<PlanDay[]>('/plans');
   },
   
-  updateDay: async (date: string, mealIds: string[]) => {
-    return await apiFetch(`/plans/${date}`, {
+  updateDay: async (date: string, mealIds: string[]): Promise<PlanDay> => {
+    return await apiFetch<PlanDay>(`/plans/${date}`, {
       method: 'PUT',
-      body: JSON.stringify({ mealIds })
+      body: JSON.stringify({ meals: mealIds })
     });
   },
   
-  reset: async () => {
-    return await apiFetch('/plans', {
+  reset: async (): Promise<{ success: boolean }> => {
+    return await apiFetch<{ success: boolean }>('/plans', {
       method: 'DELETE'
     });
   },
   
-  getShoppingList: async () => {
-    return await apiFetch('/plans/shopping-list');
+  getShoppingList: async (): Promise<GroceryItem[]> => {
+    return await apiFetch<GroceryItem[]>('/plans/shopping-list');
   }
 }; 

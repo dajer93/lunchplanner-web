@@ -4,13 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import AuthLayout from '@/components/Layout';
 import { authAPI } from '@/services/api';
-
-interface UserData {
-  name: string;
-  email: string;
-  userId: string;
-  [key: string]: unknown;
-}
+import { User } from '@/models/types';
 
 export default function Home() {
   const [userName, setUserName] = useState('');
@@ -18,8 +12,8 @@ export default function Home() {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const userData = await authAPI.getCurrentUser() as { user: UserData };
-        setUserName(userData.user.name);
+        const userData = await authAPI.getCurrentUser();
+        setUserName(userData.name || '');
       } catch (error) {
         console.error('Error fetching user data:', error);
       }

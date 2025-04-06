@@ -6,10 +6,6 @@ const nextConfig = {
     // your project has ESLint errors.
     ignoreDuringBuilds: true,
   },
-  // Change server port to avoid conflict with API server on port 3000
-  serverOptions: {
-    port: 3001,
-  },
 };
 
 module.exports = nextConfig;
