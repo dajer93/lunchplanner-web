@@ -5,19 +5,65 @@ let ingredients: Ingredient[] = [];
 let meals: Meal[] = [];
 let mealPlan: PlanDay[] = [];
 
-// Initialize with today and next 6 days
-const createEmptyPlan = (): PlanDay[] => {
-  const plan: PlanDay[] = [];
+// Get next 7 days starting from today
+const getNext7Days = (): Set<string> => {
+  // Get today in local time zone
   const today = new Date();
+  today.setHours(0, 0, 0, 0); // Set to midnight for consistent date handling
   
+  const nextDays: Set<string> = new Set();
   for (let i = 0; i < 7; i++) {
     const date = new Date(today);
     date.setDate(today.getDate() + i);
-    plan.push({
-      date: date.toISOString().split('T')[0],
-      meals: []
-    });
+    
+    // Format date in YYYY-MM-DD format using local timezone
+    const year = date.getFullYear();
+    // Add leading zero if month is less than 10
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    // Add leading zero if day is less than 10
+    const day = date.getDate().toString().padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`;
+    
+    nextDays.add(dateStr);
   }
+  
+  console.log('Next 7 days in local timezone:', Array.from(nextDays));
+  return nextDays;
+};
+
+// Filter and sort meal plan to contain only the next 7 days
+const filterAndSortMealPlan = (plan: PlanDay[]): PlanDay[] => {
+  const nextDays = getNext7Days();
+  
+  // Filter plan to include only next 7 days
+  const filteredPlan = plan.filter(day => nextDays.has(day.date));
+  
+  // Add missing days
+  nextDays.forEach(dateStr => {
+    if (!filteredPlan.some(day => day.date === dateStr)) {
+      filteredPlan.push({
+        date: dateStr,
+        meals: []
+      });
+    }
+  });
+  
+  // Sort by date
+  filteredPlan.sort((a, b) => a.date.localeCompare(b.date));
+  
+  return filteredPlan;
+};
+
+// Initialize with today and next 6 days
+const createEmptyPlan = (): PlanDay[] => {
+  const nextDays = getNext7Days();
+  const plan: PlanDay[] = Array.from(nextDays).map(dateStr => ({
+    date: dateStr,
+    meals: []
+  }));
+  
+  // Sort by date
+  plan.sort((a, b) => a.date.localeCompare(b.date));
   
   return plan;
 };
@@ -189,33 +235,10 @@ export const getMealPlan = async (): Promise<PlanDay[]> => {
     
     // Ensure we have a valid array to work with
     if (Array.isArray(planDaysResponse) && planDaysResponse.length > 0) {
-      // If we got data from API, ensure it covers the next 7 days from today
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // Filter and sort plan to contain only the next 7 days
+      const filteredPlan = filterAndSortMealPlan(planDaysResponse);
       
-      const nextDays: Set<string> = new Set();
-      for (let i = 0; i < 7; i++) {
-        const date = new Date(today);
-        date.setDate(today.getDate() + i);
-        nextDays.add(date.toISOString().split('T')[0]);
-      }
-      
-      // Filter out old dates and add missing dates
-      const filteredPlan = planDaysResponse.filter(day => nextDays.has(day.date));
-      
-      // Add missing days
-      nextDays.forEach(dateStr => {
-        if (!filteredPlan.some(day => day.date === dateStr)) {
-          filteredPlan.push({
-            date: dateStr,
-            meals: []
-          });
-        }
-      });
-      
-      // Sort by date
-      filteredPlan.sort((a, b) => a.date.localeCompare(b.date));
-      
+      console.log('Final filtered plan:', filteredPlan);
       mealPlan = filteredPlan;
       return [...mealPlan];
     } else {
@@ -235,6 +258,7 @@ export const getMealPlan = async (): Promise<PlanDay[]> => {
 
 export const updateDayPlan = async (date: string, mealIds: string[]): Promise<PlanDay> => {
   try {
+    console.log(`Updating day plan for date: ${date} with meals:`, mealIds);
     const response = await planAPI.updateDay(date, mealIds);
     console.log('API response for updateDay:', response);
     
@@ -246,14 +270,19 @@ export const updateDayPlan = async (date: string, mealIds: string[]): Promise<Pl
     if (updatedDay) {
       // Find and update the day in our local mealPlan array
       const existingDayIndex = mealPlan.findIndex(day => day.date === date);
+      console.log(`Found existing day at index: ${existingDayIndex}`);
+      
       if (existingDayIndex >= 0) {
         mealPlan[existingDayIndex] = updatedDay;
       } else {
         // If the day doesn't exist in our plan, add it
         mealPlan.push(updatedDay);
-        // Sort by date to maintain order
-        mealPlan.sort((a, b) => a.date.localeCompare(b.date));
+        
+        // Filter and sort to ensure meal plan only contains next 7 days
+        mealPlan = filterAndSortMealPlan(mealPlan);
       }
+      
+      console.log('Updated meal plan:', mealPlan);
     }
     
     return updatedDay;
@@ -272,8 +301,9 @@ export const updateDayPlan = async (date: string, mealIds: string[]): Promise<Pl
       mealPlan[existingDayIndex] = newPlanDay;
     } else {
       mealPlan.push(newPlanDay);
-      // Sort by date to maintain order
-      mealPlan.sort((a, b) => a.date.localeCompare(b.date));
+      
+      // Filter and sort to ensure meal plan only contains next 7 days
+      mealPlan = filterAndSortMealPlan(mealPlan);
     }
     
     return newPlanDay;
